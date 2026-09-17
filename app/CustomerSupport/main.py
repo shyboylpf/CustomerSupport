@@ -2,6 +2,7 @@ from strands import Agent, tool
 from bedrock_agentcore.runtime import BedrockAgentCoreApp
 from model.load import load_model
 from mcp_client.client import get_streamable_http_mcp_client
+from memory.session import get_memory_session_manager
 
 app = BedrockAgentCoreApp()
 log = app.logger
@@ -72,14 +73,7 @@ for mcp_client in mcp_clients:
 
 # --- Agent Setup ---
 
-_agent = None
-
-def get_or_create_agent():
-    global _agent
-    if _agent is None:
-        _agent = Agent(
-            model=load_model(),
-            system_prompt="""You are a helpful and professional customer support assistant for an e-commerce company.
+SYSTEM_PROMPT = """You are a helpful and professional customer support assistant for an e-commerce company.
 Your role is to:
 - Provide accurate information using the tools available to you
 - Be friendly, patient, and understanding with customers
@@ -88,16 +82,25 @@ Your role is to:
 
 You have access to tools for looking up return policies, searching product information, and more.
 Additional tools may be available at runtime — always check your full tool list and use the most appropriate tool for each customer request.
-Always use tools to get accurate, up-to-date information rather than guessing.""",
-            tools=tools
-        )
-    return _agent
+Always use tools to get accurate, up-to-date information rather than guessing."""
+
+
+def create_agent(session_id: str, actor_id: str) -> Agent:
+    session_manager = get_memory_session_manager(session_id, actor_id)
+    return Agent(
+        model=load_model(),
+        system_prompt=SYSTEM_PROMPT,
+        tools=tools,
+        session_manager=session_manager,
+    )
 
 
 @app.entrypoint
 async def invoke(payload, context):
     log.info("Invoking Agent.....")
-    agent = get_or_create_agent()
+    session_id = getattr(context, 'session_id', 'default-session')
+    actor_id = payload.get("actor_id", "anonymous")
+    agent = create_agent(session_id, actor_id)
     stream = agent.stream_async(payload.get("prompt"))
     async for event in stream:
         if "data" in event and isinstance(event["data"], str):
